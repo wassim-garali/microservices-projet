@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package product;
+
+service ProductService {
+  rpc GetAveragePriceByCategory (CategoryRequest) returns (AveragePriceResponse);
+}
+
+message CategoryRequest {
+  string category = 1;
+}
+
+message AveragePriceResponse {
+  double averagePrice = 1;
+}
