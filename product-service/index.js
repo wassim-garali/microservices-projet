@@ -1,51 +1,74 @@
- // Importer Express et Mongoose
 const express = require('express');
-const mongoose = require('mongoose');
+     const mongoose = require('mongoose');
+     const { Kafka } = require('kafkajs');
 
-// Initialiser Express
-const app = express();
+     const app = express();
+     app.use(express.json());
 
-// Activer le parsing JSON pour les requêtes
-app.use(express.json());
+     // Connexion à MongoDB
+     mongoose.connect('mongodb://localhost:27017/productdb', {
+       useNewUrlParser: true,
+       useUnifiedTopology: true,
+     })
+       .then(() => console.log('Connected to MongoDB'))
+       .catch((err) => console.error('MongoDB connection error:', err));
 
-// Connexion à MongoDB
-mongoose.connect('mongodb://localhost:27017/products', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+     // Schéma et modèle MongoDB
+     const productSchema = new mongoose.Schema({
+       productId: String,
+       name: String,
+       price: Number,
+       category: String,
+     });
+     const Product = mongoose.model('Product', productSchema);
 
-// Définir le schéma du produit
-const productSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  price: { type: Number, required: true },
-  category: { type: String, required: true },
-});
+     // Configurer le client Kafka
+     const kafka = new Kafka({
+       clientId: 'product-service',
+       brokers: ['localhost:9092'],
+     });
+     const producer = kafka.producer();
 
-// Créer le modèle Product
-const Product = mongoose.model('Product', productSchema);
+     // Route pour ajouter un produit
+     app.post('/api/products', async (req, res) => {
+       try {
+         const { productId, name, price, category } = req.body;
+         const product = new Product({ productId, name, price, category });
+         await product.save();
 
-// Endpoint POST /products
-app.post('/products', async (req, res) => {
-  try {
-    const product = new Product(req.body);
-    await product.save();
-    res.status(201).json(product);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
+         // Envoyer un événement Kafka
+         await producer.connect();
+         await producer.send({
+           topic: 'product-added',
+           messages: [
+             {
+               value: JSON.stringify({ productId, name, price, category }),
+             },
+           ],
+         });
+         console.log(`Event sent for product: ${name}`);
+         await producer.disconnect();
 
-// Endpoint GET /products
-app.get('/products', async (req, res) => {
-  try {
-    const products = await Product.find();
-    res.json(products);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+         res.status(201).json(product);
+       } catch (error) {
+         console.error('Error adding product:', error.message);
+         res.status(500).json({ error: 'Failed to add product' });
+       }
+     });
 
-// Démarrer le serveur sur le port 3001
-app.listen(3001, () => console.log('REST Service running on port 3001'));
+     // Route pour récupérer tous les produits
+     app.get('/api/products', async (req, res) => {
+       try {
+         const products = await Product.find();
+         res.json(products);
+       } catch (error) {
+         console.error('Error fetching products:', error.message);
+         res.status(500).json({ error: 'Failed to fetch products' });
+       }
+     });
+
+     // Démarrer le serveur
+     const PORT = process.env.PORT || 3000;
+     app.listen(PORT, () => {
+       console.log(`Product service running on port ${PORT}`);
+     });
